@@ -1,12 +1,24 @@
-/* 
-实验室指纹柜
-stm32rct6 
+/*
+指纹识别货柜管理系统
+Copyright(C) JassyLiu 2016
+All rights reserved
+UART1  -->    串口屏
+UART2  -->    指纹识别模块
+
+权限设置 
+---------------------------------------------------------------------------
+级别 |        权限                           |  权限所有人                           | 
+1       | 办公室 						                  | 该部门部员						              	 |
+2       | 设备部 办公室		            | 该部门部员					　               |
+3       | 销售部 办公室 设备部  | 该部门部员 所有部长 其他 |
+-----------------------------------------------------------------------------
 */
 #include "stm32f10x.h"
 #include "usart.h"
 #include "timer.h"
-#include "fingerprint.h"
 #include "r303.h"
+#include "stmflash.h"    
+#include "delay.h"
 #define DOOR1_ON		GPIO_ResetBits(GPIOC, GPIO_Pin_0) 
 #define DOOR1_OFF	    GPIO_SetBits(GPIOC, GPIO_Pin_0)
 #define DOOR2_ON		GPIO_ResetBits(GPIOC, GPIO_Pin_1) 
@@ -36,38 +48,46 @@ stm32rct6
 #define DOOR14_ON		GPIO_ResetBits(GPIOC, GPIO_Pin_13) 
 #define DOOR14_OFF      GPIO_SetBits(GPIOC, GPIO_Pin_13)  
 //===================指令定义=====================
-#define VERIFY		0x30		     //识别
-#define ADD_CHECK	0x32		  	 //  
-#define ADD		  	0x33		     //添加指纹
-#define INIT      0x34
+#define VERIFY		0x30		  																							   //识别
+#define ADD		  	0x33		   																							  //添加指纹
+#define INIT        0x34			 																							  //初始化
 //===============全局变量========================
-u8 uart1_rxbuf[9];				 //串行接收缓存
-u8 uart1_txbuf[9];				 //串行发送缓存
-u8 uart1_rxlength;				 //串口接收计数变量
-u8 uart1_rxchar;				
-u8 user_limit_get;         //读取到的用户权限
-u8 user_limit_now = 0;     //当前用户权限
-unsigned int user_cnt = 0;		    //用户数：初始化读取  
-unsigned char user_add_limit = 3; //默认指纹添加权限 
-unsigned char  uart1_rx_flag;
-extern unsigned char r303_rxlength;
-extern unsigned char r303_rxbuf[12];
+u8 uart1_rxbuf[9];			   																									 //串行接收缓存
+u8 uart1_txbuf[9];			  																									 //串行发送缓存
+u8 uart1_rxlength;																												 //串口接收计数变量
+u8 uart1_rxchar;				    
+unsigned char  uart1_rx_flag;	 																	 //串口1接收标志位
+extern unsigned char r303_rxlength;											 //串口2接收长度
+extern unsigned char r303_rxbuf[12];										 //串口接收缓存
+u8 user_limit_get;				 																									 //读取到的用户权限
+u8 user_limit_now = 0;																								 //当前用户权限
+unsigned int user_cnt = 0;		 																			 //用户数：初始化读取  
+unsigned char user_add_limit = 1; 													 //默认指纹添加权限 
+//================Flash保存=======================
+//要写入到STM32 FLASH的字符串数组
+const u8 level1[]={0,0,0,1};
+const u8 level2[]={0,0,0,2};
+const u8 level3[]={0,0,0,3};                                           //权限
+#define SIZE sizeof(level1)	 																			  	//数组长度
+#define FLASH_SAVE_ADDR  0X08020000            	//设置FLASH 保存地址(必须为偶数，且其值要大于本代码所占用FLASH的大小+0X08000000)
+unsigned char  datatemp[SIZE];         												  //FLASH 读取缓存 
 //==============串口屏幕指令=======================
-unsigned char cmd1[ ]={"page 2"};		//提示 请确认指纹
-unsigned char cmd2[ ]={"page 3"};		//开柜界面
-unsigned char cmd3[ ]={"page 4"};		//提示 失败
-unsigned char cmd4[ ]={"page 6"};		//提示 请录入指纹
-unsigned char cmd5[ ]={"page 8"};		//录入成功
-unsigned char cmd6[ ]={"page 9"};		//录入失败
+unsigned char cmd1[ ]={"page 2"};														//提示 请确认指纹
+unsigned char cmd2[ ]={"page 3"};														//开柜界面
+unsigned char cmd3[ ]={"page 4"};														//提示 失败
+unsigned char cmd4[ ]={"page 6"};														//提示 请录入指纹
+unsigned char cmd5[ ]={"page 8"};														//录入成功
+unsigned char cmd6[ ]={"page 9"};														//录入失败
 //=================读取用户总数===================
+//录入前被调用 读取用户数 
 void Usercnt_Init()
 {
 	do{
-	r303_ValidTempleteNum();
-	if (r303_rxlength == 12) { r303_rxlength = 0;}	
-	}while(r303_rxbuf[9]!=0x00);  //0x00确认码   	
- //10  11  两位：有效模板个数  
-	user_cnt =r303_rxbuf[11]+1;		//当前的用户数
+	  r303_ValidTempleteNum();
+	  }while(r303_rxbuf[9]!=0x00);  																//0x00确认码   	
+																																															//10  11  两位：有效模板个数  
+	  user_cnt =r303_rxbuf[11]+1;																	//当前的用户数
+	//r303_SendData(user_cnt);   																	  //调试用 
 }
 //==================延时函数======================
 void delay()
@@ -95,7 +115,7 @@ void USART_SendStr(unsigned char *s)
   {
   USART_SendData(USART1,*s);
   s++;
-		delay2(700);
+  delay2(700);//必要性延时
   }
 }
 /*
@@ -116,10 +136,8 @@ void USART_SendEnd(void)
 */
  void USERGPIO_Init(void)
 {
- GPIO_InitTypeDef  GPIO_InitStructure;
- 	
- RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOC | RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOB, ENABLE);	
-	
+ GPIO_InitTypeDef  GPIO_InitStructure;	
+ RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOC | RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOB, ENABLE);		
  GPIO_InitStructure.GPIO_Pin = 0x3FFF;		            //	设置0~13口	 
  GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP; 		 
  GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;		
@@ -131,187 +149,181 @@ void USART_SendEnd(void)
  int main(void)
  {	
 	SystemInit();
-	USERGPIO_Init();						//IO口初始化 
-	usart_Configuration(9600,115200);		//串口屏波特率9600 指纹模块波特率115200
-	printf("Test Uart Fingerprint Reader\r\n");
- 	//SetcompareLevel(5);
-	//printf("比对等级为：%d\r\n", GetcompareLevel());
-	//printf("当前超时时间：%d\r\n",GetTimeOut());
-	Usercnt_Init();							//初始化用户数变量
-	printf("User:%d\r\n",GetUserCount());
-    //USART_SendData(USART1,0x22);			//测试串口      
-	GPIO_SetBits(GPIOC, 0x3FFF);            //IO口状态初始化	
-	delay2(1000);			
+	delay_init();	
+	USERGPIO_Init();					        																   	//IO口初始化 
+	usart_Configuration(9600,115200);		
+	 //串口屏波特率9600 指纹模块波特率115200
+	Usercnt_Init();						                                             	//初始化用户数变量
+	GPIO_SetBits(GPIOC, 0x3FFF);     												   //IO口状态初始化	
+	delay2(100);		
 	while(1)
 	{	
 		 if(uart1_rx_flag==1)
-		 {
-			 uart1_rx_flag= 0;
+		 {   uart1_rx_flag= 0;
 			 switch(uart1_rxchar)
 			 {
 				//==========添加指纹权限设置======
 				 case 0x21:
-					 user_add_limit = 1;   //最高权限
+					 user_add_limit = 1;   //
+				 break;
 				 case 0x22:
 					 user_add_limit = 2;   //
+				 break;
 				 case 0x23:
-					 user_add_limit = 3;   //默认权限
+					 user_add_limit = 3;   //
+				 break;
 				//=========添加指纹===============
 				 case ADD :
 					Usercnt_Init();        //初始化用户数 
-				  r303_Save(user_cnt);
-//					switch(AddUser(user_cnt,user_add_limit))
-//					{
-//						case ACK_SUCCESS:
-//						user_cnt++;
-//						printf("%s",cmd5);
-//						USART_SendEnd();
-//						delay();
-//						break;
-//						case ACK_FAIL: 			
-//						printf("%s",cmd6);
-//						USART_SendEnd();
-//							break;
-//						case ACK_FULL:			
-//						printf("%s",cmd6);
-//						USART_SendEnd();
-//							break;		
-//					}	
-					 break;
+				  switch(r303_Save(user_cnt))
+					{
+						case 0:
+							switch(user_add_limit)
+							{
+								case 1:
+									STMFLASH_Write(FLASH_SAVE_ADDR+(user_cnt-0x01)*0x20,(u16*)level1,SIZE);
+							 	break;
+								case 2:
+									STMFLASH_Write(FLASH_SAVE_ADDR+(user_cnt-0x01)*0x20,(u16*)level2,SIZE);
+								break;
+								case 3:
+									STMFLASH_Write(FLASH_SAVE_ADDR+(user_cnt-0x01)*0x20,(u16*)level3,SIZE);
+								break;
+							  default:
+								break;
+							}
+							printf("%s",cmd5);
+						  USART_SendEnd();
+							delay();
+						break;
+						case 1:
+							printf("%s",cmd6);
+						  USART_SendEnd();
+							delay();
+						break;		
+						default:
+						break;						
+					}
+
+					break;
 				//==========指纹识别================
 				case VERIFY : 
-				switch(r303_Search())   
+					if(r303_Search()==0x00)
 					{
-						 case ACK_SUCCESS:
-							printf("%s", cmd2); 
-						  USART_SendEnd();
-//							 switch (user_limit_get)
-//							 {
-//							 case 1:
-//								 printf("%s", cmd2);
-//								 USART_SendEnd();
-//								 DOOR9_ON;
-//								 delay1(200);
-//								 DOOR9_OFF;
-//							   user_limit_now = 1;
-//								 user_limit_get = 0;
-//								 break;
-//							 case 2:
-//								 
-//								 printf("%s", cmd2);
-//								 USART_SendEnd();
-//							   user_limit_now = 2;
-//							   user_limit_get = 0;
-//								 break;
-//							 case 3:
-//								 
-//								 printf("%s", cmd2);
-//								 USART_SendEnd();
-//							   user_limit_now = 3;
-//						  	 user_limit_get = 0;
-//								 break;
-//							 default:
-//								 break;
-//							 }
-							 break;
-//						case ACK_NO_USER:
-//							 printf("%s",cmd3);
-//						     USART_SendEnd();
-//							break;
-//						case ACK_TIMEOUT:	
-//							 printf("%s",cmd3);
-//						     USART_SendEnd();
-//							break;	
-//						case ACK_GO_OUT:
-//							 printf("%s",cmd3);
-//						     USART_SendEnd();
-//							break;
-						default:
-							break;
-					 };
+						STMFLASH_Read(FLASH_SAVE_ADDR+(r303_rxbuf[11]*0x20-0x20),(u16*)datatemp,SIZE);
+						user_limit_now = datatemp[3];
+						r303_SendData(user_limit_now);
+						printf("%s", cmd2); 
+						USART_SendEnd();
+					}
+					else 
+					{
+						printf("%s", cmd3); 
+						USART_SendEnd();						
+					}
 						break;
 					//=========主界面初始化指令 ======
 					case INIT:
-							user_limit_now = 0;
-							user_limit_get = 0;
+							user_limit_now = 1;
+							user_limit_get = 1;
 						break;
 					
 					//=========开门指令============
 					case 0x41:
+						if(user_limit_now == 0x03){
 						DOOR1_ON;
 						delay1(200);
 						DOOR1_OFF;
-						DOOR1_OFF;
-						DOOR1_OFF;
-						delay1(200);
+            }
 						break;
 					case 0x42:
+						if(user_limit_now == 0x03){
 						DOOR2_ON;
 						delay1(200);
 						DOOR2_OFF;
+            }
 						break;
 					case 0x43:
+						if(user_limit_now == 0x03){
 						DOOR3_ON;
 						delay1(200);
 						DOOR3_OFF;
+            }
 						break;
 					case 0x44:
+						if(user_limit_now == 0x03){
 						DOOR4_ON;
 						delay1(200);
 						DOOR4_OFF;
+            }
 						break;
 					case 0x45:
+						if(user_limit_now == 0x03){
 						DOOR5_ON;
 						delay1(200);
 						DOOR5_OFF;
+            }
 						break;
 					case 0x46:
+						if(user_limit_now == 0x03){
 						DOOR6_ON;
 						delay1(200);
 						DOOR6_OFF;
+            }
 						break;
 					case 0x47:
+						if(user_limit_now == 0x03){
 						DOOR7_ON;
 						delay1(200);
 						DOOR7_OFF;
+            }
 						break;
 					case 0x48:
+						if(user_limit_now == 0x03){
 						DOOR8_ON;
 						delay1(200);
 						DOOR8_OFF;
+            }
 						break;
 					case 0x49:
+						if(user_limit_now == 0x03){
 						DOOR9_ON;
 						delay1(200);
 						DOOR9_OFF;
+            }
 						break;
 					case 0x4A:
-						//	if(user_limit==1)
-						//	{										
+						if(user_limit_now == 0x03){
 						DOOR10_ON;
 						delay1(200);
 						DOOR10_OFF;
-					//		}
+            }
 						break;
 					case 0x4B:
+
 						DOOR11_ON;
 						delay1(200);
 						DOOR11_OFF;
+            
 						break;
 					case 0x4C:
-						DOOR12_ON;
+						if(user_limit_now >= 0x02)
+						{DOOR12_ON;
 						delay1(200);
-						DOOR12_OFF;
+						DOOR12_OFF;}
 						break;
 					case 0x4D:
-						DOOR13_ON;
+						if(user_limit_now >= 0x02)
+						{DOOR13_ON;
 						delay1(200);
-						DOOR13_OFF;
+						DOOR13_OFF;}
 						break;
 					case 0x4E:
-						DOOR14_ON;
+						if(user_limit_now >= 0x02)
+						{DOOR14_ON;
 						delay1(200);
 						DOOR14_OFF;
+						}
 						break;
 			 }
 			 

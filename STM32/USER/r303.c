@@ -16,7 +16,7 @@ unsigned char FP_Get_Img[6] = { 0x01,0x00,0x03,0x01,0x00,0x05 };
 //生成指纹特征 存于CharBuffer1  包标识 0x01 包长度 0x0004 指令码 0x02 缓冲区号 0x01  校验和 0x0008
 unsigned char  FP_Img_To_Buffer1[7] = { 0x01,0x00,0x04,0x02,0x01,0x00,0x08 };
 //生成指纹特征 存于CharBuffer2 包标识 0x01 包长度 0x0004 指令码 0x02 缓冲区号 0x02  校验和 0x0008
-unsigned char  FP_Img_To_Buffer2[7] = { 0x01,0x00,0x04,0x02,0x02,0x00,0x08 };
+unsigned char  FP_Img_To_Buffer2[7] = { 0x01,0x00,0x04,0x02,0x02,0x00,0x09 };
 //注册模板    包标识 0x01 包长度 0x0003 指令码 0x05 校验和 0x0009
 unsigned char  FP_RegModel[6] = {0x01,0x00,0x03,0x05,0x00,0x09};
 //储存指纹    包标识 0x01 包长度 0x0006 指令码 0x06   缓冲区1  位置号未定义（2bytes） 校验和未定义（2bytes）
@@ -130,11 +130,12 @@ void r303_StoreChar(unsigned int PageID)
 	unsigned int sum = 0;
 	unsigned char sum_h = 0;
 	unsigned char sum_l = 0;
-	id_l = PageID & 0x00FF00;
-	id_h = (PageID & 0x00FF00) >> 8;
+	id_l = PageID & 0x00FF;
+	id_h = (PageID & 0xFF00) >> 8;
 	sum = 0x0E + id_l + id_h;
-	sum_l = sum & 0x00FF00;
-	sum_h = (sum & 0x00FF00) >> 8;
+	sum_l = sum & 0x00FF;
+	sum_h = (sum & 0xFF00) >> 8;
+
 	for (i = 0; i < 6; i++)
 	{
 		r303_SendData(FP_Pack_Head[i]);
@@ -157,6 +158,7 @@ void r303_StoreChar(unsigned int PageID)
 void r303_ValidTempleteNum(void)
 {
 	unsigned int i;
+	r303_rxlength = 0;
 	for (i = 0; i < 6; i++)
 	{
 		r303_SendData(FP_Pack_Head[i]);
@@ -177,17 +179,21 @@ void r303_ValidTempleteNum(void)
 unsigned char r303_Search(void)
 {
 	unsigned int i;
+	unsigned int j=0;
 		do 
 	{
+		r303_rxlength = 0;
 		r303_GetImage();		 //第一次获取指纹图像 
-		r303_delay(5000);
-		if (r303_rxlength == 12) { r303_rxlength = 0;}
-	} while (r303_rxbuf[9]!=0x00);
-	r303_delay(1000);
+		r303_delay(200);
+		j++;
+	} while ((r303_rxbuf[9]!=0x00)&&(j<=50));
+  
+	r303_delay(50);
+	r303_rxlength = 0;
 	r303_ImageToCharBuffer1();  //图像转换到buffer1 
 	r303_delay(1000); 
-	if (r303_rxlength == 12)   {r303_rxlength = 0;}
-	
+
+	r303_rxlength = 0;
 	for (i = 0; i < 6; i++)
 	{
 		r303_SendData(FP_Pack_Head[i]);
@@ -196,40 +202,43 @@ unsigned char r303_Search(void)
 	{
 		r303_SendData(FP_Seach[i]);
 	}
-	r303_delay(1000);
-	//delay?
-	if (r303_rxlength == 12) { r303_rxlength = 0;}
+	r303_delay(200);
 	return r303_rxbuf[9];
 }
 
 /*
 注册指纹 
 */
-void r303_Save(unsigned int PageID)
+unsigned char r303_Save(unsigned int PageID)
 {
-	do 
+		do 
 	{
+		r303_rxlength = 0;
 		r303_GetImage();		 //第一次获取指纹图像 
-		r303_delay(5000);
-		if (r303_rxlength == 12) { r303_rxlength = 0;}
+		r303_delay(200);
 	} while (r303_rxbuf[9]!=0x00);
-	r303_delay(1000);
+	r303_delay(100);
+	r303_rxlength = 0;
 	r303_ImageToCharBuffer1();  //图像转换到buffer1 
 	r303_delay(1000); 
-	if (r303_rxlength == 12)   {r303_rxlength = 0;}
-	do
+	if(r303_rxbuf[9]!=0x00){return 1;}
+		do 
 	{
-		r303_GetImage();		      //第二次获取指纹图像 
-		r303_delay(5000);
-		if (r303_rxlength == 12) { r303_rxlength = 0;}
-	} while (r303_rxbuf[9] != 0x00);
-	r303_delay(1000);
+		r303_rxlength = 0;
+		r303_GetImage();		 //第二次
+		r303_delay(200);
+	} while (r303_rxbuf[9]!=0x00);
+	r303_delay(100);
+	r303_rxlength = 0;
 	r303_ImageToCharBuffer2();  //图像转换到buffer2
 	r303_delay(1000);
-	if (r303_rxlength == 12) { r303_rxlength = 0; }
+	if(r303_rxbuf[9]!=0x00){return 1;}
+	r303_rxlength = 0;
 	r303_RegModel();            //合并特征模板  
-	r303_delay(1000);
-	if (r303_rxlength == 12) { r303_rxlength = 0; }
-	r303_StoreChar(PageID);			//储存指纹       
-	if (r303_rxlength == 12) { r303_rxlength = 0; }  
+	r303_delay(50);
+	if(r303_rxbuf[9]!=0x00){return 1;}
+  r303_rxlength = 0;
+	r303_StoreChar(PageID);			//储存指纹     
+  if(r303_rxbuf[9]!=0x00){return 1;}  
+	return 0;
 }

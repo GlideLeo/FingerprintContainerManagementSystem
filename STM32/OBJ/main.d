@@ -31,5 +31,6 @@
 ..\obj\main.o: usart.h
 ..\obj\main.o: D:\MDK\ARM\ARMCC\Bin\..\include\stdio.h
 ..\obj\main.o: timer.h
-..\obj\main.o: fingerprint.h
 ..\obj\main.o: r303.h
+..\obj\main.o: stmflash.h
+..\obj\main.o: delay.h

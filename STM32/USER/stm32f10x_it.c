@@ -151,6 +151,8 @@ extern u8 gRsBuf[9];				 			//串行接收缓存
 extern u8 uart1_rxbuf[9];				 	//串行接收缓存
 extern u8 uart1_rxlength;         //串口接收计数变量
 extern  u8 uart1_rxchar;
+extern unsigned char r303_rxlength;
+extern unsigned char r303_rxbuf[12];
 extern unsigned char  uart1_rx_flag;
 void USART1_IRQHandler(void)
 {  	
@@ -170,9 +172,10 @@ void USART2_IRQHandler(void)
 {
 	if(USART_GetITStatus(USART2, USART_IT_RXNE) != RESET)
 	{	
-		gRsBuf[gRsLength] = USART_ReceiveData(USART2);	
+		r303_rxbuf[r303_rxlength] = USART_ReceiveData(USART2);	
 // 	printf("%c",gRsBuf[gRsLength]);
-		++gRsLength;
+		++r303_rxlength;
+		if (r303_rxlength >= 12) { r303_rxlength = 0;}
 	}
 }
 
