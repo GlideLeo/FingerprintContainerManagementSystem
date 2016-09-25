@@ -203,7 +203,12 @@ unsigned char r303_Search(void)
 		r303_SendData(FP_Seach[i]);
 	}
 	r303_delay(200);
-	return r303_rxbuf[9];
+	if((r303_rxbuf[9]==0x00)&&(r303_rxbuf[8]==0x07))
+		return r303_rxbuf[9];
+	 if((r303_rxbuf[9]==0x00)&&(r303_rxbuf[8]==0x00))
+		 return 0x05;
+	  if(r303_rxbuf[9]!=0x00)
+			 return 0x05;
 }
 
 /*
